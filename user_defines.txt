@@ -19,3 +19,7 @@
 #-DDEBUG_LOG
 # Use DEBUG_LOG_VERBOSE instead (or both) to see verbose debug logging (spammy stuff)
 #-DDEBUG_LOG_VERBOSE
+
+-DMY_BINDING_PHRASE="dankdrone"
+-DHOME_WIFI_SSID="BLAZE_2G"
+-DHOME_WIFI_PASSWORD="1024320095"

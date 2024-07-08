@@ -238,13 +238,12 @@ void SendCachedMSP()
 
 void SetSoftMACAddress()
 {
-  if (!firmwareOptions.hasUID)
-  {
-    memcpy(firmwareOptions.uid, config.GetGroupAddress(), 6);
-  }
-  DBG("EEPROM MAC = ");
+  DBGLN("EEPROM MAC = ");
   for (int i = 0; i < 6; i++)
   {
+    #ifndef MY_UID
+    memcpy(firmwareOptions.uid, config.GetGroupAddress(), 6);
+    #endif
     DBG("%x", firmwareOptions.uid[i]); // Debug prints
     DBG(",");
   }
@@ -254,11 +253,6 @@ void SetSoftMACAddress()
   firmwareOptions.uid[0] = firmwareOptions.uid[0] & ~0x01;
 
   WiFi.mode(WIFI_STA);
-  #if defined(PLATFORM_ESP8266)
-    WiFi.setOutputPower(20.5);
-  #elif defined(PLATFORM_ESP32)
-    WiFi.setTxPower(WIFI_POWER_19_5dBm);
-  #endif
   WiFi.begin("network-name", "pass-to-network", 1);
   WiFi.disconnect();
 

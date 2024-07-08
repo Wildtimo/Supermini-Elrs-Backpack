@@ -3,27 +3,45 @@
 #include "module_base.h"
 #include <Arduino.h>
 
-#define VRX_BOOT_DELAY              7000
+#define BIT_BANG_FREQ                               10000
 
-#define VRX_RESPONSE_TIMEOUT        500
-#define VRX_UART_BAUD               115200  // hdzero uses 115k baud between the ESP8285 and the STM32
+#define SYNTHESIZER_REG_A                           0x00
+#define SYNTHESIZER_REG_B                           0x01
+#define SYNTHESIZER_REG_C                           0x02
+#define SYNTHESIZER_REG_D                           0x03
+#define VCO_SWITCH_CAP_CONTROL_REGISTER             0x04
+#define DFC_CONTROL_REGISTER                        0x05
+#define SIXM_AUDIO_DEMODULATOR_CONTROL_REGISTER     0x06
+#define SIXM5_AUDIO_DEMODULATOR_CONTROL_REGISTER    0x07
+#define RECEIVER_CONTROL_REGISTER_1                 0x08
+#define RECEIVER_CONTROL_REGISTER_2                 0x09
+#define POWER_DOWN_CONTROL_REGISTER                 0x0A
+#define STATE_REGISTER                              0x0F
 
-#define CHANNEL_INDEX_UNKNOWN       255
-#define VRX_DVR_RECORDING_ACTIVE    1
-#define VRX_DVR_RECORDING_INACTIVE  0
-#define VRX_DVR_RECORDING_UNKNOWN   255
+#define RX5808_READ_CTRL_BIT                        0x00
+#define RX5808_WRITE_CTRL_BIT                       0x01
+#define RX5808_ADDRESS_R_W_LENGTH                   5
+#define RX5808_DATA_LENGTH                          20
+#define RX5808_PACKET_LENGTH                        25
 
-class HDZero : public MSPModuleBase
+const uint16_t frequencyTable[48] = {
+    5865, 5845, 5825, 5805, 5785, 5765, 5745, 5725, // A
+    5733, 5752, 5771, 5790, 5809, 5828, 5847, 5866, // B
+    5705, 5685, 5665, 5645, 5885, 5905, 5925, 5945, // E
+    5740, 5760, 5780, 5800, 5820, 5840, 5860, 5880, // F
+    5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917, // R
+    5333, 5373, 5413, 5453, 5493, 5533, 5573, 5613  // L
+};
+
+class RX5808 : public ModuleBase
 {
 public:
-    explicit HDZero(Stream *port) : MSPModuleBase(port) {};
     void Init();
     void SendIndexCmd(uint8_t index);
-    uint8_t GetChannelIndex();
-    void SetChannelIndex(uint8_t index);
-    uint8_t GetRecordingState();
-    void SetRecordingState(uint8_t recordingState, uint16_t delay);
-    void SendHeadTrackingEnableCmd(bool enable);
-    void SetOSD(mspPacket_t *packet);
-    void SetRTC();
+
+private:
+    void rtc6705WriteRegister(uint32_t buf);
+    uint32_t rtc6705readRegister(uint8_t readRegister);
+    void EnableSPIMode();
+    bool SPIModeEnabled = false;
 };

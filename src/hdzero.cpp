@@ -1,141 +1,156 @@
-#include <Arduino.h>
-#include "hdzero.h"
-#include "msptypes.h"
+#include "rx5808.h"
+#include <SPI.h>
 #include "logging.h"
-#include "time.h"
 
 void
-HDZero::Init()
+RX5808::Init()
 {
     ModuleBase::Init();
+    
+    pinMode(PIN_MOSI, INPUT);
+    pinMode(PIN_CLK, INPUT);
+    pinMode(PIN_CS, INPUT);
+
+    #if defined(PIN_CS_2)
+        pinMode(PIN_CS_2, INPUT);
+    #endif
+
+    DBGLN("RX5808 init complete");
 }
 
 void
-HDZero::SendIndexCmd(uint8_t index)
+RX5808::EnableSPIMode()
 {
-    uint8_t retries = 3;
-    while (GetChannelIndex() != index && retries > 0)
+    pinMode(PIN_MOSI, OUTPUT);
+    pinMode(PIN_CLK, OUTPUT);
+    pinMode(PIN_CS, OUTPUT);
+
+    digitalWrite(PIN_MOSI, LOW);
+    digitalWrite(PIN_CLK, LOW);
+    digitalWrite(PIN_CS, HIGH);
+
+    #if defined(PIN_CS_2)
+        pinMode(PIN_CS_2, OUTPUT);
+        digitalWrite(PIN_CS_2, HIGH);
+    #endif
+
+    SPIModeEnabled = true;
+
+    DBGLN("SPI config complete");
+}
+
+void
+RX5808::SendIndexCmd(uint8_t index)
+{
+    DBG("Setting index ");
+    DBGLN("%x", index);
+
+    uint16_t f = frequencyTable[index];
+    
+    uint32_t data = ((((f - 479) / 2) / 32) << 7) | (((f - 479) / 2) % 32);
+
+    uint32_t newRegisterData = SYNTHESIZER_REG_B  | (RX5808_WRITE_CTRL_BIT << 4) | (data << 5);
+
+    uint32_t currentRegisterData = SYNTHESIZER_REG_B | (RX5808_WRITE_CTRL_BIT << 4) | rtc6705readRegister(SYNTHESIZER_REG_B);
+
+    if (newRegisterData != currentRegisterData)
     {
-        SetChannelIndex(index);
-        retries--;
+        rtc6705WriteRegister(newRegisterData);
     }
 }
 
-uint8_t
-HDZero::GetChannelIndex()
+void
+RX5808::rtc6705WriteRegister(uint32_t buf)
 {
-    MSP msp;
-    mspPacket_t packet;
-    packet.reset();
-    packet.makeCommand();
-    packet.function = MSP_ELRS_BACKPACK_GET_CHANNEL_INDEX;
-
-    // Send request, then wait for a response back from the VRX
-    bool receivedResponse = msp.awaitPacket(&packet, m_port, VRX_RESPONSE_TIMEOUT);
-
-    if (receivedResponse)
+    if (!SPIModeEnabled) 
     {
-        mspPacket_t *packetResponse = msp.getReceivedPacket();
-        msp.markPacketReceived();
-        return packetResponse->readByte();
+        EnableSPIMode();
     }
 
-    DBGLN("HDZero module: Exceeded timeout while waiting for channel index response");
-    return CHANNEL_INDEX_UNKNOWN;
-}
+    uint32_t periodMicroSec = 1000000 / BIT_BANG_FREQ;
 
-void
-HDZero::SetChannelIndex(uint8_t index)
-{
-    MSP msp;
-    mspPacket_t packet;
-    packet.reset();
-    packet.makeCommand();
-    packet.function = MSP_ELRS_BACKPACK_SET_CHANNEL_INDEX;
-    packet.addByte(index);  // payload
+    digitalWrite(PIN_CS, LOW);
+    #if defined(PIN_CS_2)
+        digitalWrite(PIN_CS_2, LOW);
+    #endif
+    delayMicroseconds(periodMicroSec);
 
-    msp.sendPacket(&packet, m_port);
-}
-
-uint8_t
-HDZero::GetRecordingState()
-{
-    MSP msp;
-    mspPacket_t packet;
-    packet.reset();
-    packet.makeCommand();
-    packet.function = MSP_ELRS_BACKPACK_GET_RECORDING_STATE;
-
-    // Send request, then wait for a response back from the VRX
-    bool receivedResponse = msp.awaitPacket(&packet, m_port, VRX_RESPONSE_TIMEOUT);
-
-    if (receivedResponse)
+    for (uint8_t i = 0; i < RX5808_PACKET_LENGTH; ++i)
     {
-        mspPacket_t *packetResponse = msp.getReceivedPacket();
-        msp.markPacketReceived();
-        return packetResponse->readByte() ? VRX_DVR_RECORDING_ACTIVE : VRX_DVR_RECORDING_INACTIVE;
+        digitalWrite(PIN_CLK, LOW);
+        delayMicroseconds(periodMicroSec / 4);
+        digitalWrite(PIN_MOSI, buf & 0x01);
+        delayMicroseconds(periodMicroSec / 4);
+        digitalWrite(PIN_CLK, HIGH);
+        delayMicroseconds(periodMicroSec / 2);
+
+        buf >>= 1; 
     }
 
-    DBGLN("HDZero module: Exceeded timeout while waiting for recording state response");
-    return VRX_DVR_RECORDING_UNKNOWN;
+    digitalWrite(PIN_CLK, LOW);
+    delayMicroseconds(periodMicroSec);
+    digitalWrite(PIN_MOSI, LOW);
+    digitalWrite(PIN_CLK, LOW);
+    digitalWrite(PIN_CS, HIGH);
+    #if defined(PIN_CS_2)
+        digitalWrite(PIN_CS_2, HIGH);
+    #endif
 }
 
-void
-HDZero::SetRecordingState(uint8_t recordingState, uint16_t delay)
+uint32_t
+RX5808::rtc6705readRegister(uint8_t readRegister)
 {
-    DBGLN("SetRecordingState = %d delay = %d", recordingState, delay);
-
-    MSP msp;
-    mspPacket_t packet;
-    packet.reset();
-    packet.makeCommand();
-    packet.function = MSP_ELRS_BACKPACK_SET_RECORDING_STATE;
-    packet.addByte(recordingState);
-    packet.addByte(delay & 0xFF); // delay byte 1
-    packet.addByte(delay >> 8); // delay byte 2
-
-    msp.sendPacket(&packet, m_port);
-}
-
-void
-HDZero::SendHeadTrackingEnableCmd(bool enable)
-{
-    MSP msp;
-    mspPacket_t packet;
-    packet.reset();
-    packet.makeCommand();
-    packet.function = MSP_ELRS_BACKPACK_SET_HEAD_TRACKING;
-    packet.addByte(enable);
-
-    msp.sendPacket(&packet, m_port);
-}
-
-void
-HDZero::SetOSD(mspPacket_t *packet)
-{
-    MSP msp;
-    msp.sendPacket(packet, m_port);
-}
-
-void
-HDZero::SetRTC()
-{
-    MSP msp;
-    mspPacket_t packet;
-    tm timeData;
-    if(!getLocalTime(&timeData)) {
-        DBGLN("Could not obtain time data.");
-        return;
+    if (!SPIModeEnabled) 
+    {
+        EnableSPIMode();
     }
-    packet.reset();
-    packet.makeCommand();
-    packet.function = MSP_ELRS_BACKPACK_SET_RTC;
-    packet.addByte(timeData.tm_year);
-    packet.addByte(timeData.tm_mon);
-    packet.addByte(timeData.tm_mday);
-    packet.addByte(timeData.tm_hour);
-    packet.addByte(timeData.tm_min);
-    packet.addByte(timeData.tm_sec);
 
-    msp.sendPacket(&packet, m_port);
+    uint32_t buf = readRegister | (RX5808_READ_CTRL_BIT << 4);
+    uint32_t registerData = 0;
+
+    uint32_t periodMicroSec = 1000000 / BIT_BANG_FREQ;
+
+    digitalWrite(PIN_CS, LOW);
+    delayMicroseconds(periodMicroSec);
+
+    // Write register address and read bit
+    for (uint8_t i = 0; i < RX5808_ADDRESS_R_W_LENGTH; ++i)
+    {
+        digitalWrite(PIN_CLK, LOW);
+        delayMicroseconds(periodMicroSec / 4);
+        digitalWrite(PIN_MOSI, buf & 0x01);
+        delayMicroseconds(periodMicroSec / 4);
+        digitalWrite(PIN_CLK, HIGH);
+        delayMicroseconds(periodMicroSec / 2);
+
+        buf >>= 1; 
+    }
+
+    // Change pin from output to input
+    pinMode(PIN_MOSI, INPUT);
+
+    // Read data 20 bits
+    for (uint8_t i = 0; i < RX5808_DATA_LENGTH; i++)
+    {
+        digitalWrite(PIN_CLK, LOW);
+        delayMicroseconds(periodMicroSec / 4);
+
+        if (digitalRead(PIN_MOSI))
+        {
+            registerData = registerData | (1 << (5 + i));
+        }
+
+        delayMicroseconds(periodMicroSec / 4);
+        digitalWrite(PIN_CLK, HIGH);
+        delayMicroseconds(periodMicroSec / 2);
+    }
+
+    // Change pin back to output
+    pinMode(PIN_MOSI, OUTPUT);
+
+    digitalWrite(PIN_MOSI, LOW);
+    digitalWrite(PIN_CLK, LOW);
+    digitalWrite(PIN_CS, HIGH);
+
+    return registerData;
 }
